@@ -83,7 +83,25 @@ Todas as decisões estão em [docs/adr](docs/adr/README.md).
 
 ## Como rodar
 
-<!-- Fase 0 em diante: pré-requisitos e comandos make. -->
+**Pré-requisitos:** Docker Engine com o plugin Compose (no Windows, dentro do WSL2; ver [ADR-0001](docs/adr/0001-runtime-docker-wsl2.md)), `make` e `openssl`.
+
+```bash
+cp .env.example .env
+openssl rand -hex 16   # rode duas vezes: uma chave para S3_ACCESS_KEY, outra para S3_SECRET_KEY
+make up                # sobe os serviços
+make ps                # o redpanda deve aparecer como (healthy)
+make stats             # consumo de CPU e RAM por container
+make down              # derruba tudo (os dados ficam nos volumes)
+```
+
+| Serviço | Endereço local | Função |
+|---|---|---|
+| Redpanda | `localhost:19092` | Broker (API Kafka) |
+| SeaweedFS | `http://localhost:8333` | Object storage (API S3, exige chave) |
+
+Todas as portas escutam só em `127.0.0.1`.
+
+**Consumo medido** (`docker stats`, serviços ociosos): Redpanda ~430 MiB, SeaweedFS ~70 MiB.
 
 ## Insights do dashboard
 

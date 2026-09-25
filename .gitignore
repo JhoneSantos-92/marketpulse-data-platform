@@ -1,0 +1,30 @@
+# Segredos
+.env
+*.pem
+*.key
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Dados locais (nunca versionar dados do lake)
+data/
+lake/
+*.parquet
+
+# Airflow
+orchestration/logs/
+
+# Editores e sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

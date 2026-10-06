@@ -2,9 +2,10 @@ import logging
 import os
 import sys
 
-import polars as pl
-from deltalake import DeltaTable, write_deltalake
+from deltalake import write_deltalake
+from deltalake.exceptions import TableNotFoundError
 from dotenv import load_dotenv
+import polars as pl
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,6 +20,8 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_SECRET_ACCESS_KEY": os.getenv("S3_SECRET_KEY", "admin"),
         "AWS_ENDPOINT_URL": os.getenv("S3_ENDPOINT", "http://localhost:8333"),
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+        "AWS_ALLOW_HTTP": "true",
+        "AWS_REGION": "us-east-1",
     }
 
 def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
@@ -27,9 +30,8 @@ def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
 
     logger.info(f"Lendo camada Silver de Trades: {source_path}")
     try:
-        dt = DeltaTable(source_path, storage_options=storage_options)
-        df_silver = dt.to_polars()
-    except (ValueError, FileNotFoundError, OSError) as e:
+        df_silver = pl.read_delta(source_path, storage_options=storage_options)
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
         logger.warning(f"Tabela Silver de Trades não encontrada ou vazia ({e}). Pulando agregação Gold.")
         return
 
@@ -39,12 +41,10 @@ def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
 
     logger.info(f"Gerando OHLCV 1m para {len(df_silver)} registros da Silver.")
 
-    # Converte timestamp para datetime do Polars
     df_transformed = df_silver.with_columns(
         pl.from_epoch("trade_timestamp", time_unit="ms").alias("trade_dt")
     )
 
-    # Agregação OHLCV por símbolo em janelas de 1 minuto
     df_ohlcv = (
         df_transformed.group_by_dynamic(
             "trade_dt",
@@ -81,9 +81,8 @@ def transform_gold_metrics(storage_uri: str, storage_options: dict) -> None:
 
     logger.info(f"Lendo camada Silver de BookTicker: {source_path}")
     try:
-        dt = DeltaTable(source_path, storage_options=storage_options)
-        df_silver = dt.to_polars()
-    except (ValueError, FileNotFoundError, OSError) as e:
+        df_silver = pl.read_delta(source_path, storage_options=storage_options)
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
         logger.warning(f"Tabela Silver de BookTicker não encontrada ou vazia ({e}). Pulando agregação Gold.")
         return
 

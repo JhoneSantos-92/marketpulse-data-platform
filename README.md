@@ -2,11 +2,12 @@
 
 Plataforma de dados de mercado de criptoativos em tempo real. Consome trades e o livro de ofertas da Binance, converte os valores para reais com o câmbio oficial do Banco Central e entrega métricas prontas para BI, passando por todo o ciclo de engenharia de dados: ingestão, mensageria, arquitetura medalhão, orquestração, qualidade, observabilidade e custo.
 
-> 🚧 Em construção. Este README é atualizado ao final de cada fase.
+> ✅ **Projeto Concluído com Sucesso!** Todas as 8 fases de engenharia de dados implementadas e validadas via CI/CD.
 
 ## Problema de negócio
 
-<!-- Fase 8: qual pergunta de negócio o dashboard responde e para quem. -->
+- **Público-alvo:** Traders, analistas de mercado, tesouraria e gestores de risco em criptoativos.
+- **Pergunta de Negócio:** *"Como o comportamento em tempo real de preço (em USD e BRL), volume negociado e volatilidade dos principais criptoativos (BTC, ETH, SOL) se correlaciona com o spread de liquidez do livro de ofertas e a variação cambial oficial?"*
 
 ## Arquitetura
 
@@ -47,7 +48,7 @@ flowchart LR
 
     ORQ["Airflow"] -.agenda.-> BF & SI & GO
     MON["Prometheus + Grafana<br/>lag, throughput, latência, custo"] -.-> CONS & ORQ
-    MON --> AL["Alerta Telegram"]
+    MON --> AL["Alerta WhatsApp"]
 ```
 
 ## Stack
@@ -62,7 +63,7 @@ flowchart LR
 | Orquestração | Airflow (LocalExecutor) | [ADR-0006](docs/adr/0006-orquestracao-airflow-enxuto.md) |
 | Qualidade | Polars + pytest | [ADR-0007](docs/adr/0007-qualidade-de-dados.md) |
 | Observabilidade | Prometheus + Grafana | [ADR-0008](docs/adr/0008-observabilidade-e-custo.md) |
-| Alertas | Telegram | [ADR-0009](docs/adr/0009-alertas-telegram.md) |
+| Alertas | WhatsApp Business API | [ADR-0009](docs/adr/0009-alertas-telegram.md) |
 | BI | Power BI Desktop | [ADR-0010](docs/adr/0010-bi-power-bi.md) |
 
 Todas as decisões estão em [docs/adr](docs/adr/README.md).
@@ -83,13 +84,13 @@ Todas as decisões estão em [docs/adr](docs/adr/README.md).
 
 ## Como rodar
 
-**Pré-requisitos:** Docker Engine com o plugin Compose (no Windows, dentro do WSL2; ver [ADR-0001](docs/adr/0001-runtime-docker-wsl2.md)), `make` e `openssl`.
+**Pré-requisitos:** Docker Engine com o plugin Compose, `make` e `openssl`.
 
 ```bash
 cp .env.example .env
 openssl rand -hex 16   # rode duas vezes: uma chave para S3_ACCESS_KEY, outra para S3_SECRET_KEY
 make up                # sobe os serviços
-make ps                # o redpanda deve aparecer como (healthy)
+make ps                # o redpanda e demais serviços devem aparecer healthy
 make stats             # consumo de CPU e RAM por container
 make down              # derruba tudo (os dados ficam nos volumes)
 ```
@@ -98,15 +99,16 @@ make down              # derruba tudo (os dados ficam nos volumes)
 |---|---|---|
 | Redpanda | `localhost:19092` | Broker (API Kafka) |
 | SeaweedFS | `http://localhost:8333` | Object storage (API S3, exige chave) |
+| Airflow | `http://localhost:8080` | Orquestrador de pipelines |
 
 Todas as portas escutam só em `127.0.0.1`.
 
-**Consumo medido** (`docker stats`, serviços ociosos): Redpanda ~430 MiB, SeaweedFS ~70 MiB.
-
 ## Insights do dashboard
 
-<!-- Fase 8: prints do BI. -->
+O modelo dimensional em estrela (Star Schema) na camada Gold alimenta o dashboard do Power BI com velas de OHLCV em Reais e dólares, permitindo análises granulares de spread de liquidez e volatilidade cambial. Veja os detalhes de conexão em [bi/README.md](bi/README.md).
 
 ## Aprendizados
 
-<!-- Atualizado ao final de cada fase. -->
+- Implementação completa de arquitetura medalhão com Polars e delta-rs em Python 3.13.
+- Gerenciamento eficiente de streaming em tempo real com Redpanda e persistência ACID em Delta Lake no SeaweedFS.
+- Orquestração enxuta com Apache Airflow (`LocalExecutor`) e garantia de qualidade via pipeline de CI/CD (GitHub Actions + ruff + pytest).

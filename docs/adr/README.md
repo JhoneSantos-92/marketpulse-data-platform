@@ -16,3 +16,4 @@ Cada decisão técnica do projeto fica registrada em um arquivo, com contexto, o
 | [0010](0010-bi-power-bi.md) | BI: Power BI Desktop |
 | [0011](0011-streams-binance.md) | Fontes da Binance: @trade + @bookTicker e REST para backfill |
 | [0012](0012-conversao-usd-brl.md) | Conversão USD/BRL: última cotação disponível (série SGS 1) |
+| [0013](0013-ambiente-python-uv.md) | Ambiente Python: uv com Python 3.13 |

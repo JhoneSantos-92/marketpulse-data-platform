@@ -4,7 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "confluent-kafka>=2.15.1",
+    "deltalake>=0.25.0",
     "httpx>=0.28.1",
+    "polars>=1.20.0",
     "python-dotenv>=1.2.3",
     "websockets>=17.1",
 ]

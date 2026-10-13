@@ -2,10 +2,10 @@ import logging
 import os
 import sys
 
+import polars as pl
 from deltalake import write_deltalake
 from deltalake.exceptions import TableNotFoundError
 from dotenv import load_dotenv
-import polars as pl
 
 logging.basicConfig(
     level=logging.INFO,

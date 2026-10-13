@@ -2,12 +2,13 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
-from deltalake import write_deltalake
-from dotenv import load_dotenv
 import httpx
 import polars as pl
+from deltalake import write_deltalake
+from deltalake.exceptions import TableNotFoundError
+from dotenv import load_dotenv
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,7 +54,7 @@ def fetch_bcb_exchange_rates(bcb_url: str) -> pl.DataFrame:
         return df_bcb
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.warning(f"Aviso ao buscar cotações do BCB ({e}). Usando cotação padrão de fallback (5.50).")
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         return pl.DataFrame({
             "exchange_date": [today_str],
             "usd_brl": [5.50]
@@ -66,7 +67,7 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
     logger.info(f"Lendo camada Bronze de Trades: {source_path}")
     try:
         df_bronze = pl.read_delta(source_path, storage_options=storage_options)
-    except Exception as e:
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
         logger.warning(f"Tabela Bronze de Trades não encontrada ou vazia ({e}). Pulando transformação.")
         return
 
@@ -137,7 +138,7 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
     logger.info(f"Lendo camada Bronze de BookTicker: {source_path}")
     try:
         df_bronze = pl.read_delta(source_path, storage_options=storage_options)
-    except Exception as e:
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
         logger.warning(f"Tabela Bronze de BookTicker não encontrada ou vazia ({e}). Pulando transformação.")
         return
 

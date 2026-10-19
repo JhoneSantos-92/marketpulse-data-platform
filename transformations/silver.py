@@ -18,9 +18,13 @@ logging.basicConfig(
 logger = logging.getLogger("silver_transformation")
 
 def get_s3_storage_options() -> dict[str, str]:
+    access_key = os.getenv("S3_ACCESS_KEY")
+    secret_key = os.getenv("S3_SECRET_KEY")
+    if not access_key or not secret_key:
+        raise OSError("S3_ACCESS_KEY and S3_SECRET_KEY must be set in environment.")
     return {
-        "AWS_ACCESS_KEY_ID": os.getenv("S3_ACCESS_KEY", "admin"),
-        "AWS_SECRET_ACCESS_KEY": os.getenv("S3_SECRET_KEY", "admin"),
+        "AWS_ACCESS_KEY_ID": access_key,
+        "AWS_SECRET_ACCESS_KEY": secret_key,
         "AWS_ENDPOINT_URL": os.getenv("S3_ENDPOINT", "http://localhost:8333"),
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
         "AWS_ALLOW_HTTP": "true",

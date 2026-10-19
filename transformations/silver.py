@@ -6,9 +6,12 @@ from datetime import UTC, datetime
 
 import httpx
 import polars as pl
-from deltalake import write_deltalake
+from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import TableNotFoundError
 from dotenv import load_dotenv
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from monitoring.alert import send_whatsapp_alert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,7 +60,9 @@ def fetch_bcb_exchange_rates(bcb_url: str) -> pl.DataFrame:
         logger.info(f"Total de {len(df_bcb)} cotações obtidas do BCB.")
         return df_bcb
     except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning(f"Aviso ao buscar cotações do BCB ({e}). Usando cotação padrão de fallback (5.50).")
+        err_msg = f"Aviso ao buscar cotações do BCB ({e}). Usando cotação padrão de fallback (5.50)."
+        logger.warning(err_msg)
+        send_whatsapp_alert(f"ALERTA: Falha ao buscar cotações do Banco Central (SGS 1): {e}. Cotação de fallback (5.50) ativada.")
         today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         return pl.DataFrame({
             "exchange_date": [today_str],
@@ -81,27 +86,72 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
 
     logger.info(f"Processando {len(df_bronze)} registros da Bronze de Trades.")
 
-    parsed_rows = []
-    for row in df_bronze.iter_rows(named=True):
-        try:
-            raw = json.loads(row["raw_json"])
-            parsed_rows.append({
-                "trade_id": int(raw.get("t")),
-                "symbol": raw.get("s", "").lower(),
-                "price": float(raw.get("p", 0.0)),
-                "quantity": float(raw.get("q", 0.0)),
-                "trade_timestamp": int(raw.get("T", row["ingestion_timestamp"])),
-                "is_buyer_maker": bool(raw.get("m", False)),
-                "partition_date": row["partition_date"],
-                "partition_hour": row["partition_hour"],
-            })
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Erro ao parsear trade: {e}")
+    valid_rows = []
+    quarantine_rows = []
+    current_ts = int(datetime.now(tz=UTC).timestamp() * 1000)
 
-    if not parsed_rows:
+    for row in df_bronze.iter_rows(named=True):
+        raw_json_str = row.get("raw_json", "{}")
+        try:
+            raw = json.loads(raw_json_str)
+            trade_id = int(raw.get("t"))
+            price = float(raw.get("p", 0.0))
+            qty = float(raw.get("q", 0.0))
+            ts = int(raw.get("T", row["ingestion_timestamp"]))
+
+            rejection_reason = None
+            if price <= 0:
+                rejection_reason = "INVALID_PRICE_NON_POSITIVE"
+            elif qty <= 0:
+                rejection_reason = "INVALID_QUANTITY_NON_POSITIVE"
+            elif ts <= 0:
+                rejection_reason = "INVALID_TIMESTAMP_NON_POSITIVE"
+
+            if rejection_reason:
+                quarantine_rows.append({
+                    "raw_json": raw_json_str,
+                    "rejection_reason": rejection_reason,
+                    "rejection_timestamp": current_ts,
+                    "source_table": "bronze_trades",
+                })
+            else:
+                valid_rows.append({
+                    "trade_id": trade_id,
+                    "symbol": raw.get("s", "").lower(),
+                    "price": price,
+                    "quantity": qty,
+                    "trade_timestamp": ts,
+                    "is_buyer_maker": bool(raw.get("m", False)),
+                    "partition_date": row["partition_date"],
+                    "partition_hour": row["partition_hour"],
+                })
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            quarantine_rows.append({
+                "raw_json": raw_json_str,
+                "rejection_reason": f"PARSING_ERROR: {e!s}",
+                "rejection_timestamp": current_ts,
+                "source_table": "bronze_trades",
+            })
+
+    if quarantine_rows:
+        q_path = f"{storage_uri}/silver/quarantine_trades"
+        df_q = pl.DataFrame(quarantine_rows)
+        logger.warning(f"Encontrados {len(quarantine_rows)} registros inválidos. Gravando na quarentena: {q_path}")
+        try:
+            write_deltalake(
+                q_path,
+                df_q.to_arrow(),
+                mode="append",
+                storage_options=storage_options,
+            )
+        except Exception as q_err:  # noqa: BLE001
+            logger.error(f"Erro ao gravar na quarentena: {q_err}")
+
+    if not valid_rows:
+        logger.info("Nenhum registro válido de trade após validação.")
         return
 
-    df_parsed = pl.DataFrame(parsed_rows)
+    df_parsed = pl.DataFrame(valid_rows)
 
     df_dedup = df_parsed.unique(subset=["trade_id"])
     logger.info(f"Registros após deduplicação por trade_id: {len(df_dedup)} (removidos {len(df_parsed) - len(df_dedup)} duplicados).")
@@ -126,14 +176,25 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
         (pl.col("price") * pl.col("usd_brl")).alias("price_brl")
     )
 
-    logger.info(f"Escrevendo tabela Silver de Trades em {dest_path}")
-    write_deltalake(
-        dest_path,
-        df_silver.to_arrow(),
-        mode="append",
-        storage_options=storage_options,
-        partition_by=["symbol", "partition_date"],
-    )
+    logger.info(f"Escrevendo/fazendo upsert da tabela Silver de Trades em {dest_path}")
+    try:
+        dt = DeltaTable(dest_path, storage_options=storage_options)
+        dt.merge(
+            source=df_silver.to_arrow(),
+            predicate="target.trade_id = source.trade_id",
+            source_alias="source",
+            target_alias="target"
+        ).when_matched_update_all().when_not_matched_insert_all().execute()
+        logger.info(f"Merge (upsert) executado com sucesso na tabela Silver de Trades em {dest_path}")
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError):
+        write_deltalake(
+            dest_path,
+            df_silver.to_arrow(),
+            mode="append",
+            storage_options=storage_options,
+            partition_by=["symbol", "partition_date"],
+        )
+        logger.info(f"Tabela Silver de Trades criada/escrita em {dest_path}")
 
 def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
     source_path = f"{storage_uri}/bronze/book_ticker"
@@ -152,39 +213,87 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
 
     logger.info(f"Processando {len(df_bronze)} registros da Bronze de BookTicker.")
 
-    parsed_rows = []
+    valid_rows = []
+    quarantine_rows = []
+    current_ts = int(datetime.now(tz=UTC).timestamp() * 1000)
+
     for row in df_bronze.iter_rows(named=True):
+        raw_json_str = row.get("raw_json", "{}")
         try:
-            raw = json.loads(row["raw_json"])
+            raw = json.loads(raw_json_str)
+            update_id = int(raw.get("u", 0))
             bid_price = float(raw.get("b", 0.0))
             ask_price = float(raw.get("a", 0.0))
-            parsed_rows.append({
-                "update_id": int(raw.get("u", 0)),
-                "symbol": raw.get("s", "").lower(),
-                "best_bid_price": bid_price,
-                "best_bid_qty": float(raw.get("B", 0.0)),
-                "best_ask_price": ask_price,
-                "best_ask_qty": float(raw.get("A", 0.0)),
-                "spread": ask_price - bid_price,
-                "partition_date": row["partition_date"],
-                "partition_hour": row["partition_hour"],
-            })
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            logger.debug(f"Erro ao parsear book_ticker: {e}")
 
-    if not parsed_rows:
+            rejection_reason = None
+            if bid_price < 0 or ask_price < 0:
+                rejection_reason = "INVALID_BID_ASK_PRICE_NEGATIVE"
+
+            if rejection_reason:
+                quarantine_rows.append({
+                    "raw_json": raw_json_str,
+                    "rejection_reason": rejection_reason,
+                    "rejection_timestamp": current_ts,
+                    "source_table": "bronze_book_ticker",
+                })
+            else:
+                valid_rows.append({
+                    "update_id": update_id,
+                    "symbol": raw.get("s", "").lower(),
+                    "best_bid_price": bid_price,
+                    "best_bid_qty": float(raw.get("B", 0.0)),
+                    "best_ask_price": ask_price,
+                    "best_ask_qty": float(raw.get("A", 0.0)),
+                    "spread": ask_price - bid_price,
+                    "partition_date": row["partition_date"],
+                    "partition_hour": row["partition_hour"],
+                })
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            quarantine_rows.append({
+                "raw_json": raw_json_str,
+                "rejection_reason": f"PARSING_ERROR: {e!s}",
+                "rejection_timestamp": current_ts,
+                "source_table": "bronze_book_ticker",
+            })
+
+    if quarantine_rows:
+        q_path = f"{storage_uri}/silver/quarantine_book_ticker"
+        df_q = pl.DataFrame(quarantine_rows)
+        logger.warning(f"Encontrados {len(quarantine_rows)} registros inválidos de book_ticker. Gravando na quarentena: {q_path}")
+        try:
+            write_deltalake(
+                q_path,
+                df_q.to_arrow(),
+                mode="append",
+                storage_options=storage_options,
+            )
+        except Exception as q_err:  # noqa: BLE001
+            logger.error(f"Erro ao gravar na quarentena de book_ticker: {q_err}")
+
+    if not valid_rows:
         return
 
-    df_silver = pl.DataFrame(parsed_rows)
+    df_silver = pl.DataFrame(valid_rows)
 
-    logger.info(f"Escrevendo tabela Silver de BookTicker em {dest_path}")
-    write_deltalake(
-        dest_path,
-        df_silver.to_arrow(),
-        mode="append",
-        storage_options=storage_options,
-        partition_by=["symbol", "partition_date"],
-    )
+    logger.info(f"Escrevendo/fazendo upsert da tabela Silver de BookTicker em {dest_path}")
+    try:
+        dt = DeltaTable(dest_path, storage_options=storage_options)
+        dt.merge(
+            source=df_silver.to_arrow(),
+            predicate="target.update_id = source.update_id",
+            source_alias="source",
+            target_alias="target"
+        ).when_matched_update_all().when_not_matched_insert_all().execute()
+        logger.info(f"Merge (upsert) executado com sucesso na tabela Silver de BookTicker em {dest_path}")
+    except (ValueError, FileNotFoundError, OSError, TableNotFoundError):
+        write_deltalake(
+            dest_path,
+            df_silver.to_arrow(),
+            mode="append",
+            storage_options=storage_options,
+            partition_by=["symbol", "partition_date"],
+        )
+        logger.info(f"Tabela Silver de BookTicker criada/escrita em {dest_path}")
 
 def main() -> None:
     load_dotenv()

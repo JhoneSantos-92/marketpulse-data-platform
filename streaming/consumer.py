@@ -23,6 +23,8 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_SECRET_ACCESS_KEY": os.getenv("S3_SECRET_KEY", "admin"),
         "AWS_ENDPOINT_URL": os.getenv("S3_ENDPOINT", "http://localhost:8333"),
         "AWS_S3_ALLOW_UNSAFE_RENAME": "true",
+        "AWS_ALLOW_HTTP": "true",
+        "AWS_REGION": "us-east-1",
     }
 
 def process_batch(messages: list, topic: str, storage_uri: str, storage_options: dict) -> None:
@@ -106,13 +108,14 @@ def main() -> None:
 
     storage_options = get_s3_storage_options()
 
-    batch_size = 500
-    batch_timeout_sec = 5.0
+    batch_size = 10
+    batch_timeout_sec = 2.0
     accumulated_messages = {topic: [] for topic in topics}
     last_flush_time = time.time()
 
     try:
-        while True:
+        processed_count = 0
+        while processed_count < 50:
             timeout = 1.0
             msg = consumer.poll(timeout)
             current_time = time.time()
@@ -123,6 +126,7 @@ def main() -> None:
                         if msgs:
                             process_batch(msgs, t, storage_uri, storage_options)
                             consumer.commit(asynchronous=False)
+                            processed_count += len(msgs)
                             accumulated_messages[t] = []
                     last_flush_time = current_time
                 continue
@@ -140,6 +144,7 @@ def main() -> None:
             if len(accumulated_messages[topic]) >= batch_size:
                 process_batch(accumulated_messages[topic], topic, storage_uri, storage_options)
                 consumer.commit(asynchronous=False)
+                processed_count += len(accumulated_messages[topic])
                 accumulated_messages[topic] = []
                 last_flush_time = current_time
 
@@ -147,6 +152,7 @@ def main() -> None:
         logger.info("Consumer interrompido pelo usuário.")
     finally:
         consumer.close()
+        logger.info("Consumer finalizado.")
 
 if __name__ == "__main__":
     main()

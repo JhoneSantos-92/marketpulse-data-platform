@@ -8,8 +8,10 @@ load_dotenv()
 
 def create_s3_bucket() -> None:
     endpoint = os.getenv("S3_ENDPOINT", "http://localhost:8333")
-    access_key = os.getenv("S3_ACCESS_KEY", "admin")
-    secret_key = os.getenv("S3_SECRET_KEY", "admin")
+    access_key = os.getenv("S3_ACCESS_KEY")
+    secret_key = os.getenv("S3_SECRET_KEY")
+    if not access_key or not secret_key:
+        raise OSError("S3_ACCESS_KEY and S3_SECRET_KEY must be set in environment.")
     bucket = "marketpulse-lake"
 
     print(f"Conectando ao S3 ({endpoint}) para criar o bucket '{bucket}'...")

@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime
 
 import polars as pl
-from confluent_kafka import Consumer, KafkaError
+from confluent_kafka import Consumer, KafkaError, Producer
 from deltalake import write_deltalake
 from dotenv import load_dotenv
 
@@ -31,9 +31,11 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_REGION": "us-east-1",
     }
 
-def process_batch(messages: list, topic: str, storage_uri: str, storage_options: dict) -> None:
+def process_batch(messages: list, topic: str, storage_uri: str, storage_options: dict, bootstrap_servers: str = "localhost:19092") -> None:
     if not messages:
         return
+
+    dlq_producer = Producer({"bootstrap.servers": bootstrap_servers, "client.id": "streaming-dlq-producer"})
 
     data_rows = []
     for msg in messages:
@@ -60,7 +62,21 @@ def process_batch(messages: list, topic: str, storage_uri: str, storage_options:
             }
             data_rows.append(row)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            logger.error(f"Erro ao processar mensagem individual: {e}")
+            err_msg = f"Erro ao processar mensagem individual: {e}"
+            logger.error(err_msg)
+            try:
+                dlq_payload = json.dumps({
+                    "original_message": msg.value().decode("utf-8", errors="ignore"),
+                    "error": str(e),
+                    "original_topic": topic,
+                    "timestamp": int(time.time() * 1000),
+                }).encode("utf-8")
+                dlq_producer.produce(topic="market.dlq", value=dlq_payload)
+                dlq_producer.poll(0)
+            except Exception as dlq_err:  # noqa: BLE001
+                logger.error(f"Erro ao enviar para DLQ: {dlq_err}")
+
+    dlq_producer.flush()
 
     if not data_rows:
         return

@@ -30,6 +30,7 @@ KLINE_COLUMNS = [
     "ignore",
 ]
 
+
 def fetch_klines(
     client: httpx.Client,
     base_url: str,
@@ -51,29 +52,42 @@ def fetch_klines(
         params["endTime"] = end_time
 
     response = client.get(url, params=params, timeout=30.0)
-    
+
     if response.status_code == 429:
         retry_after = int(response.headers.get("Retry-After", 60))
-        logger.warning(f"Rate limit atingido (429). Aguardando {retry_after} segundos...")
+        logger.warning(
+            f"Rate limit atingido (429). Aguardando {retry_after} segundos..."
+        )
         time.sleep(retry_after)
-        return fetch_klines(client, base_url, symbol, interval, start_time, end_time, limit)
+        return fetch_klines(
+            client, base_url, symbol, interval, start_time, end_time, limit
+        )
 
     response.raise_for_status()
     return response.json()
+
 
 def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Binance REST API Backfill for Klines")
-    parser.add_argument("--symbol", type=str, default="BTCUSDT", help="Trading symbol (e.g., BTCUSDT)")
-    parser.add_argument("--interval", type=str, default="1m", help="Kline interval (e.g., 1m, 1h)")
-    parser.add_argument("--limit", type=int, default=10, help="Number of klines to fetch (max 1000)")
+    parser.add_argument(
+        "--symbol", type=str, default="BTCUSDT", help="Trading symbol (e.g., BTCUSDT)"
+    )
+    parser.add_argument(
+        "--interval", type=str, default="1m", help="Kline interval (e.g., 1m, 1h)"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=10, help="Number of klines to fetch (max 1000)"
+    )
     args = parser.parse_args()
 
     base_url = os.getenv("BINANCE_REST_URL", "https://data-api.binance.vision")
     symbol = args.symbol.upper()
 
-    logger.info(f"Iniciando backfill para {symbol} (intervalo: {args.interval}, limite: {args.limit})")
+    logger.info(
+        f"Iniciando backfill para {symbol} (intervalo: {args.interval}, limite: {args.limit})"
+    )
     logger.info(f"Endpoint REST: {base_url}")
 
     with httpx.Client() as client:
@@ -87,7 +101,7 @@ def main() -> None:
             )
 
             logger.info(f"Total de {len(raw_klines)} registros obtidos com sucesso.")
-            
+
             for kline in raw_klines[:5]:  # Exibe os primeiros 5 registros como amostra
                 record = dict(zip(KLINE_COLUMNS, kline, strict=False))
                 logger.info(json.dumps(record, ensure_ascii=False))
@@ -95,6 +109,7 @@ def main() -> None:
         except (httpx.HTTPError, ValueError, KeyError) as e:
             logger.error(f"Erro durante a execução do backfill: {e}")
             sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

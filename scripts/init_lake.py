@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def create_s3_bucket() -> None:
     endpoint = os.getenv("S3_ENDPOINT", "http://localhost:8333")
     access_key = os.getenv("S3_ACCESS_KEY")
@@ -28,6 +29,7 @@ def create_s3_bucket() -> None:
         print(f"Bucket '{bucket}' criado com sucesso!")
     except ClientError as e:
         print(f"Nota ao criar bucket (pode já existir): {e}")
+
 
 if __name__ == "__main__":
     create_s3_bucket()

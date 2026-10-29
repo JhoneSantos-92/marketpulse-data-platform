@@ -28,7 +28,6 @@ with DAG(
     catchup=False,
     max_active_runs=1,
 ) as dag:
-
     silver_task = PythonOperator(
         task_id="run_silver_layer",
         python_callable=run_silver_transformation,

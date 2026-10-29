@@ -14,6 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gold_transformation")
 
+
 def get_s3_storage_options() -> dict[str, str]:
     access_key = os.getenv("S3_ACCESS_KEY")
     secret_key = os.getenv("S3_SECRET_KEY")
@@ -28,6 +29,7 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_REGION": "us-east-1",
     }
 
+
 def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
     source_path = f"{storage_uri}/silver/trades"
     dest_path = f"{storage_uri}/gold/fact_ohlcv_1m"
@@ -36,7 +38,9 @@ def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
     try:
         df_silver = pl.read_delta(source_path, storage_options=storage_options)
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
-        logger.warning(f"Tabela Silver de Trades não encontrada ou vazia ({e}). Pulando agregação Gold.")
+        logger.warning(
+            f"Tabela Silver de Trades não encontrada ou vazia ({e}). Pulando agregação Gold."
+        )
         return
 
     if df_silver.is_empty():
@@ -55,18 +59,20 @@ def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
             every="1m",
             group_by="symbol",
         )
-        .agg([
-            pl.col("price").first().alias("open"),
-            pl.col("price").max().alias("high"),
-            pl.col("price").min().alias("low"),
-            pl.col("price").last().alias("close"),
-            pl.col("quantity").sum().alias("volume"),
-            pl.col("price_brl").first().alias("open_brl"),
-            pl.col("price_brl").max().alias("high_brl"),
-            pl.col("price_brl").min().alias("low_brl"),
-            pl.col("price_brl").last().alias("close_brl"),
-            pl.count("trade_id").alias("trade_count"),
-        ])
+        .agg(
+            [
+                pl.col("price").first().alias("open"),
+                pl.col("price").max().alias("high"),
+                pl.col("price").min().alias("low"),
+                pl.col("price").last().alias("close"),
+                pl.col("quantity").sum().alias("volume"),
+                pl.col("price_brl").first().alias("open_brl"),
+                pl.col("price_brl").max().alias("high_brl"),
+                pl.col("price_brl").min().alias("low_brl"),
+                pl.col("price_brl").last().alias("close_brl"),
+                pl.count("trade_id").alias("trade_count"),
+            ]
+        )
         .sort(["symbol", "trade_dt"])
     )
 
@@ -79,6 +85,7 @@ def transform_gold_ohlcv(storage_uri: str, storage_options: dict) -> None:
         partition_by=["symbol"],
     )
 
+
 def transform_gold_metrics(storage_uri: str, storage_options: dict) -> None:
     source_path = f"{storage_uri}/silver/book_ticker"
     dest_path = f"{storage_uri}/gold/fact_market_metrics"
@@ -87,25 +94,28 @@ def transform_gold_metrics(storage_uri: str, storage_options: dict) -> None:
     try:
         df_silver = pl.read_delta(source_path, storage_options=storage_options)
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
-        logger.warning(f"Tabela Silver de BookTicker não encontrada ou vazia ({e}). Pulando agregação Gold.")
+        logger.warning(
+            f"Tabela Silver de BookTicker não encontrada ou vazia ({e}). Pulando agregação Gold."
+        )
         return
 
     if df_silver.is_empty():
         logger.info("Nenhum dado encontrado na tabela Silver de BookTicker.")
         return
 
-    logger.info(f"Calculando métricas de spread para {len(df_silver)} registros da Silver BookTicker.")
+    logger.info(
+        f"Calculando métricas de spread para {len(df_silver)} registros da Silver BookTicker."
+    )
 
-    df_metrics = (
-        df_silver.group_by(["symbol", "partition_date"])
-        .agg([
+    df_metrics = df_silver.group_by(["symbol", "partition_date"]).agg(
+        [
             pl.col("spread").mean().alias("avg_spread"),
             pl.col("spread").max().alias("max_spread"),
             pl.col("spread").min().alias("min_spread"),
             pl.col("best_bid_price").mean().alias("avg_bid_price"),
             pl.col("best_ask_price").mean().alias("avg_ask_price"),
             pl.count("update_id").alias("ticker_count"),
-        ])
+        ]
     )
 
     logger.info(f"Escrevendo fatos de métricas Gold em {dest_path}")
@@ -116,6 +126,7 @@ def transform_gold_metrics(storage_uri: str, storage_options: dict) -> None:
         storage_options=storage_options,
         partition_by=["symbol", "partition_date"],
     )
+
 
 def main() -> None:
     load_dotenv()
@@ -129,6 +140,7 @@ def main() -> None:
     transform_gold_metrics(storage_uri, storage_options)
 
     logger.info("Camada Gold processada com sucesso!")
+
 
 if __name__ == "__main__":
     main()

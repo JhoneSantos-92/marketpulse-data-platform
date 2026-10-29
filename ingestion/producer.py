@@ -16,6 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("binance_producer")
 
+
 def build_combined_stream_url(base_url: str, symbols: list[str]) -> str:
     streams = []
     for symbol in symbols:
@@ -25,11 +26,13 @@ def build_combined_stream_url(base_url: str, symbols: list[str]) -> str:
     combined = "/".join(streams)
     return f"{base_url}/stream?streams={combined}"
 
+
 def delivery_report(err, msg):
     if err is not None:
         logger.error(f"Erro ao entregar mensagem no tópico {msg.topic()}: {err}")
     else:
         logger.debug(f"Mensagem entregue em {msg.topic()} [partição {msg.partition()}]")
+
 
 async def main() -> None:
     load_dotenv()
@@ -96,11 +99,14 @@ async def main() -> None:
                         logger.error(f"Erro ao processar estrutura da mensagem: {e}")
 
         except (TimeoutError, ConnectionClosed, WebSocketException, OSError) as e:
-            logger.warning(f"Conexão perdida ou timeout ({e}). Reconectando em {backoff} segundos...")
+            logger.warning(
+                f"Conexão perdida ou timeout ({e}). Reconectando em {backoff} segundos..."
+            )
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, max_backoff)
         finally:
             producer.flush()
+
 
 if __name__ == "__main__":
     try:

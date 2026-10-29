@@ -12,6 +12,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("whatsapp_alert")
 
+
 def send_whatsapp_alert(message: str) -> bool:
     load_dotenv()
 
@@ -20,7 +21,9 @@ def send_whatsapp_alert(message: str) -> bool:
     to_number = os.getenv("WHATSAPP_TO")
 
     if not api_url or not token or not to_number:
-        logger.warning("Credenciais do WhatsApp não configuradas no .env. Alerta não enviado.")
+        logger.warning(
+            "Credenciais do WhatsApp não configuradas no .env. Alerta não enviado."
+        )
         logger.info(f"Mensagem de alerta pendente: {message}")
         return False
 
@@ -45,6 +48,7 @@ def send_whatsapp_alert(message: str) -> bool:
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.error(f"Erro ao enviar alerta via WhatsApp: {e}")
         return False
+
 
 if __name__ == "__main__":
     send_whatsapp_alert("Teste de alerta do pipeline MarketPulse.")

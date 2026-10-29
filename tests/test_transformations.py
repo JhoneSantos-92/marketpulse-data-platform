@@ -17,7 +17,13 @@ def test_trade_validation_logic():
     raw_data = [
         {"t": 1, "s": "btcusdt", "p": 50000.0, "q": 1.0, "T": 1000000},
         {"t": 2, "s": "btcusdt", "p": -100.0, "q": 1.0, "T": 1000000},  # Preço inválido
-        {"t": 3, "s": "btcusdt", "p": 50000.0, "q": 0.0, "T": 1000000},  # Quantidade inválida
+        {
+            "t": 3,
+            "s": "btcusdt",
+            "p": 50000.0,
+            "q": 0.0,
+            "T": 1000000,
+        },  # Quantidade inválida
     ]
     valid_rows = []
     quarantine_rows = []
@@ -34,11 +40,13 @@ def test_trade_validation_logic():
 
 def test_trade_deduplication_logic():
     # Testa deduplicação por trade_id
-    df = pl.DataFrame([
-        {"trade_id": 101, "price": 100.0},
-        {"trade_id": 101, "price": 100.0},
-        {"trade_id": 102, "price": 200.0},
-    ])
+    df = pl.DataFrame(
+        [
+            {"trade_id": 101, "price": 100.0},
+            {"trade_id": 101, "price": 100.0},
+            {"trade_id": 102, "price": 200.0},
+        ]
+    )
     df_dedup = df.unique(subset=["trade_id"])
     assert len(df_dedup) == 2
     assert sorted(df_dedup["trade_id"].to_list()) == [101, 102]

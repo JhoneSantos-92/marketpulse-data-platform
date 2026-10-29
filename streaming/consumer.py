@@ -17,6 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("streaming_consumer")
 
+
 def get_s3_storage_options() -> dict[str, str]:
     access_key = os.getenv("S3_ACCESS_KEY")
     secret_key = os.getenv("S3_SECRET_KEY")
@@ -31,21 +32,30 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_REGION": "us-east-1",
     }
 
-def process_batch(messages: list, topic: str, storage_uri: str, storage_options: dict, bootstrap_servers: str = "localhost:19092") -> None:
+
+def process_batch(
+    messages: list,
+    topic: str,
+    storage_uri: str,
+    storage_options: dict,
+    bootstrap_servers: str = "localhost:19092",
+) -> None:
     if not messages:
         return
 
-    dlq_producer = Producer({"bootstrap.servers": bootstrap_servers, "client.id": "streaming-dlq-producer"})
+    dlq_producer = Producer(
+        {"bootstrap.servers": bootstrap_servers, "client.id": "streaming-dlq-producer"}
+    )
 
     data_rows = []
     for msg in messages:
         try:
             payload = json.loads(msg.value().decode("utf-8"))
             symbol = payload.get("s", "UNKNOWN").lower()
-            
+
             event_ts = payload.get("E") or payload.get("T") or int(time.time() * 1000)
             dt = datetime.fromtimestamp(event_ts / 1000, tz=UTC)
-            
+
             date_str = dt.strftime("%Y-%m-%d")
             hour_str = dt.strftime("%H")
 
@@ -65,12 +75,16 @@ def process_batch(messages: list, topic: str, storage_uri: str, storage_options:
             err_msg = f"Erro ao processar mensagem individual: {e}"
             logger.error(err_msg)
             try:
-                dlq_payload = json.dumps({
-                    "original_message": msg.value().decode("utf-8", errors="ignore"),
-                    "error": str(e),
-                    "original_topic": topic,
-                    "timestamp": int(time.time() * 1000),
-                }).encode("utf-8")
+                dlq_payload = json.dumps(
+                    {
+                        "original_message": msg.value().decode(
+                            "utf-8", errors="ignore"
+                        ),
+                        "error": str(e),
+                        "original_topic": topic,
+                        "timestamp": int(time.time() * 1000),
+                    }
+                ).encode("utf-8")
                 dlq_producer.produce(topic="market.dlq", value=dlq_payload)
                 dlq_producer.poll(0)
             except Exception as dlq_err:  # noqa: BLE001
@@ -90,7 +104,9 @@ def process_batch(messages: list, topic: str, storage_uri: str, storage_options:
     else:
         table_path = f"{storage_uri}/bronze/unknown"
 
-    logger.info(f"Escrevendo lote de {len(data_rows)} registros para o Delta Lake em {table_path}")
+    logger.info(
+        f"Escrevendo lote de {len(data_rows)} registros para o Delta Lake em {table_path}"
+    )
 
     try:
         write_deltalake(
@@ -103,6 +119,7 @@ def process_batch(messages: list, topic: str, storage_uri: str, storage_options:
     except Exception as e:
         logger.error(f"Erro ao gravar no Delta Lake ({table_path}): {e}")
         raise
+
 
 def main() -> None:
     load_dotenv()
@@ -162,7 +179,9 @@ def main() -> None:
             accumulated_messages[topic].append(msg)
 
             if len(accumulated_messages[topic]) >= batch_size:
-                process_batch(accumulated_messages[topic], topic, storage_uri, storage_options)
+                process_batch(
+                    accumulated_messages[topic], topic, storage_uri, storage_options
+                )
                 consumer.commit(asynchronous=False)
                 processed_count += len(accumulated_messages[topic])
                 accumulated_messages[topic] = []
@@ -173,6 +192,7 @@ def main() -> None:
     finally:
         consumer.close()
         logger.info("Consumer finalizado.")
+
 
 if __name__ == "__main__":
     main()

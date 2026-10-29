@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import os
@@ -8,9 +7,11 @@ from websockets.asyncio.client import connect
 
 MAX_MESSAGES = 20
 
+
 def build_url(base_url: str, symbol: str) -> str:
     streams = f"{symbol}@trade/{symbol}@bookTicker"
     return f"{base_url}/stream?streams={streams}"
+
 
 async def main() -> None:
     load_dotenv()
@@ -33,6 +34,7 @@ async def main() -> None:
             count += 1
             if count >= MAX_MESSAGES:
                 break
+
 
 if __name__ == "__main__":
     asyncio.run(main())

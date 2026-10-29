@@ -20,6 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("silver_transformation")
 
+
 def get_s3_storage_options() -> dict[str, str]:
     access_key = os.getenv("S3_ACCESS_KEY")
     secret_key = os.getenv("S3_SECRET_KEY")
@@ -34,6 +35,7 @@ def get_s3_storage_options() -> dict[str, str]:
         "AWS_REGION": "us-east-1",
     }
 
+
 def fetch_bcb_exchange_rates(bcb_url: str) -> pl.DataFrame:
     logger.info(f"Buscando cotações USD/BRL do Banco Central (SGS 1): {bcb_url}")
     try:
@@ -44,17 +46,19 @@ def fetch_bcb_exchange_rates(bcb_url: str) -> pl.DataFrame:
         response = httpx.get(bcb_url, headers=headers, timeout=30.0)
         response.raise_for_status()
         data = response.json()
-        
+
         rows = []
         for item in data:
             date_raw = item.get("data")
             val_raw = item.get("valor")
             if date_raw and val_raw:
                 dt = datetime.strptime(date_raw, "%d/%m/%Y")  # noqa: DTZ007
-                rows.append({
-                    "exchange_date": dt.strftime("%Y-%m-%d"),
-                    "usd_brl": float(val_raw)
-                })
+                rows.append(
+                    {
+                        "exchange_date": dt.strftime("%Y-%m-%d"),
+                        "usd_brl": float(val_raw),
+                    }
+                )
 
         df_bcb = pl.DataFrame(rows).sort("exchange_date")
         logger.info(f"Total de {len(df_bcb)} cotações obtidas do BCB.")
@@ -62,14 +66,16 @@ def fetch_bcb_exchange_rates(bcb_url: str) -> pl.DataFrame:
     except (httpx.HTTPError, ValueError, KeyError) as e:
         err_msg = f"Aviso ao buscar cotações do BCB ({e}). Usando cotação padrão de fallback (5.50)."
         logger.warning(err_msg)
-        send_whatsapp_alert(f"ALERTA: Falha ao buscar cotações do Banco Central (SGS 1): {e}. Cotação de fallback (5.50) ativada.")
+        send_whatsapp_alert(
+            f"ALERTA: Falha ao buscar cotações do Banco Central (SGS 1): {e}. Cotação de fallback (5.50) ativada."
+        )
         today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-        return pl.DataFrame({
-            "exchange_date": [today_str],
-            "usd_brl": [5.50]
-        })
+        return pl.DataFrame({"exchange_date": [today_str], "usd_brl": [5.50]})
 
-def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFrame) -> None:
+
+def transform_trades(
+    storage_uri: str, storage_options: dict, df_bcb: pl.DataFrame
+) -> None:
     source_path = f"{storage_uri}/bronze/trades"
     dest_path = f"{storage_uri}/silver/trades"
 
@@ -77,7 +83,9 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
     try:
         df_bronze = pl.read_delta(source_path, storage_options=storage_options)
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
-        logger.warning(f"Tabela Bronze de Trades não encontrada ou vazia ({e}). Pulando transformação.")
+        logger.warning(
+            f"Tabela Bronze de Trades não encontrada ou vazia ({e}). Pulando transformação."
+        )
         return
 
     if df_bronze.is_empty():
@@ -108,35 +116,43 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
                 rejection_reason = "INVALID_TIMESTAMP_NON_POSITIVE"
 
             if rejection_reason:
-                quarantine_rows.append({
+                quarantine_rows.append(
+                    {
+                        "raw_json": raw_json_str,
+                        "rejection_reason": rejection_reason,
+                        "rejection_timestamp": current_ts,
+                        "source_table": "bronze_trades",
+                    }
+                )
+            else:
+                valid_rows.append(
+                    {
+                        "trade_id": trade_id,
+                        "symbol": raw.get("s", "").lower(),
+                        "price": price,
+                        "quantity": qty,
+                        "trade_timestamp": ts,
+                        "is_buyer_maker": bool(raw.get("m", False)),
+                        "partition_date": row["partition_date"],
+                        "partition_hour": row["partition_hour"],
+                    }
+                )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            quarantine_rows.append(
+                {
                     "raw_json": raw_json_str,
-                    "rejection_reason": rejection_reason,
+                    "rejection_reason": f"PARSING_ERROR: {e!s}",
                     "rejection_timestamp": current_ts,
                     "source_table": "bronze_trades",
-                })
-            else:
-                valid_rows.append({
-                    "trade_id": trade_id,
-                    "symbol": raw.get("s", "").lower(),
-                    "price": price,
-                    "quantity": qty,
-                    "trade_timestamp": ts,
-                    "is_buyer_maker": bool(raw.get("m", False)),
-                    "partition_date": row["partition_date"],
-                    "partition_hour": row["partition_hour"],
-                })
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            quarantine_rows.append({
-                "raw_json": raw_json_str,
-                "rejection_reason": f"PARSING_ERROR: {e!s}",
-                "rejection_timestamp": current_ts,
-                "source_table": "bronze_trades",
-            })
+                }
+            )
 
     if quarantine_rows:
         q_path = f"{storage_uri}/silver/quarantine_trades"
         df_q = pl.DataFrame(quarantine_rows)
-        logger.warning(f"Encontrados {len(quarantine_rows)} registros inválidos. Gravando na quarentena: {q_path}")
+        logger.warning(
+            f"Encontrados {len(quarantine_rows)} registros inválidos. Gravando na quarentena: {q_path}"
+        )
         try:
             write_deltalake(
                 q_path,
@@ -154,18 +170,20 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
     df_parsed = pl.DataFrame(valid_rows)
 
     df_dedup = df_parsed.unique(subset=["trade_id"])
-    logger.info(f"Registros após deduplicação por trade_id: {len(df_dedup)} (removidos {len(df_parsed) - len(df_dedup)} duplicados).")
+    logger.info(
+        f"Registros após deduplicação por trade_id: {len(df_dedup)} (removidos {len(df_parsed) - len(df_dedup)} duplicados)."
+    )
 
     df_dedup = df_dedup.with_columns(
-        pl.from_epoch("trade_timestamp", time_unit="ms").dt.date().cast(pl.String).alias("trade_date")
+        pl.from_epoch("trade_timestamp", time_unit="ms")
+        .dt.date()
+        .cast(pl.String)
+        .alias("trade_date")
     )
 
     if not df_bcb.is_empty():
         df_joined = df_dedup.join(
-            df_bcb,
-            left_on="trade_date",
-            right_on="exchange_date",
-            how="left"
+            df_bcb, left_on="trade_date", right_on="exchange_date", how="left"
         ).with_columns(
             pl.col("usd_brl").forward_fill().backward_fill().alias("usd_brl")
         )
@@ -183,9 +201,11 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
             source=df_silver.to_arrow(),
             predicate="target.trade_id = source.trade_id",
             source_alias="source",
-            target_alias="target"
+            target_alias="target",
         ).when_matched_update_all().when_not_matched_insert_all().execute()
-        logger.info(f"Merge (upsert) executado com sucesso na tabela Silver de Trades em {dest_path}")
+        logger.info(
+            f"Merge (upsert) executado com sucesso na tabela Silver de Trades em {dest_path}"
+        )
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError):
         write_deltalake(
             dest_path,
@@ -196,6 +216,7 @@ def transform_trades(storage_uri: str, storage_options: dict, df_bcb: pl.DataFra
         )
         logger.info(f"Tabela Silver de Trades criada/escrita em {dest_path}")
 
+
 def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
     source_path = f"{storage_uri}/bronze/book_ticker"
     dest_path = f"{storage_uri}/silver/book_ticker"
@@ -204,7 +225,9 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
     try:
         df_bronze = pl.read_delta(source_path, storage_options=storage_options)
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError) as e:
-        logger.warning(f"Tabela Bronze de BookTicker não encontrada ou vazia ({e}). Pulando transformação.")
+        logger.warning(
+            f"Tabela Bronze de BookTicker não encontrada ou vazia ({e}). Pulando transformação."
+        )
         return
 
     if df_bronze.is_empty():
@@ -230,36 +253,44 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
                 rejection_reason = "INVALID_BID_ASK_PRICE_NEGATIVE"
 
             if rejection_reason:
-                quarantine_rows.append({
+                quarantine_rows.append(
+                    {
+                        "raw_json": raw_json_str,
+                        "rejection_reason": rejection_reason,
+                        "rejection_timestamp": current_ts,
+                        "source_table": "bronze_book_ticker",
+                    }
+                )
+            else:
+                valid_rows.append(
+                    {
+                        "update_id": update_id,
+                        "symbol": raw.get("s", "").lower(),
+                        "best_bid_price": bid_price,
+                        "best_bid_qty": float(raw.get("B", 0.0)),
+                        "best_ask_price": ask_price,
+                        "best_ask_qty": float(raw.get("A", 0.0)),
+                        "spread": ask_price - bid_price,
+                        "partition_date": row["partition_date"],
+                        "partition_hour": row["partition_hour"],
+                    }
+                )
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            quarantine_rows.append(
+                {
                     "raw_json": raw_json_str,
-                    "rejection_reason": rejection_reason,
+                    "rejection_reason": f"PARSING_ERROR: {e!s}",
                     "rejection_timestamp": current_ts,
                     "source_table": "bronze_book_ticker",
-                })
-            else:
-                valid_rows.append({
-                    "update_id": update_id,
-                    "symbol": raw.get("s", "").lower(),
-                    "best_bid_price": bid_price,
-                    "best_bid_qty": float(raw.get("B", 0.0)),
-                    "best_ask_price": ask_price,
-                    "best_ask_qty": float(raw.get("A", 0.0)),
-                    "spread": ask_price - bid_price,
-                    "partition_date": row["partition_date"],
-                    "partition_hour": row["partition_hour"],
-                })
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
-            quarantine_rows.append({
-                "raw_json": raw_json_str,
-                "rejection_reason": f"PARSING_ERROR: {e!s}",
-                "rejection_timestamp": current_ts,
-                "source_table": "bronze_book_ticker",
-            })
+                }
+            )
 
     if quarantine_rows:
         q_path = f"{storage_uri}/silver/quarantine_book_ticker"
         df_q = pl.DataFrame(quarantine_rows)
-        logger.warning(f"Encontrados {len(quarantine_rows)} registros inválidos de book_ticker. Gravando na quarentena: {q_path}")
+        logger.warning(
+            f"Encontrados {len(quarantine_rows)} registros inválidos de book_ticker. Gravando na quarentena: {q_path}"
+        )
         try:
             write_deltalake(
                 q_path,
@@ -275,16 +306,20 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
 
     df_silver = pl.DataFrame(valid_rows)
 
-    logger.info(f"Escrevendo/fazendo upsert da tabela Silver de BookTicker em {dest_path}")
+    logger.info(
+        f"Escrevendo/fazendo upsert da tabela Silver de BookTicker em {dest_path}"
+    )
     try:
         dt = DeltaTable(dest_path, storage_options=storage_options)
         dt.merge(
             source=df_silver.to_arrow(),
             predicate="target.update_id = source.update_id",
             source_alias="source",
-            target_alias="target"
+            target_alias="target",
         ).when_matched_update_all().when_not_matched_insert_all().execute()
-        logger.info(f"Merge (upsert) executado com sucesso na tabela Silver de BookTicker em {dest_path}")
+        logger.info(
+            f"Merge (upsert) executado com sucesso na tabela Silver de BookTicker em {dest_path}"
+        )
     except (ValueError, FileNotFoundError, OSError, TableNotFoundError):
         write_deltalake(
             dest_path,
@@ -295,11 +330,15 @@ def transform_book_ticker(storage_uri: str, storage_options: dict) -> None:
         )
         logger.info(f"Tabela Silver de BookTicker criada/escrita em {dest_path}")
 
+
 def main() -> None:
     load_dotenv()
 
     storage_uri = os.getenv("STORAGE_URI", "s3://marketpulse-lake")
-    bcb_url = os.getenv("BCB_SGS_URL", "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json")
+    bcb_url = os.getenv(
+        "BCB_SGS_URL",
+        "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados?formato=json",
+    )
     storage_options = get_s3_storage_options()
 
     logger.info("Iniciando processamento da camada Silver...")
@@ -309,6 +348,7 @@ def main() -> None:
     transform_book_ticker(storage_uri, storage_options)
 
     logger.info("Camada Silver processada com sucesso!")
+
 
 if __name__ == "__main__":
     main()

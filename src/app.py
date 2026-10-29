@@ -1,4 +1,5 @@
 import os
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -33,6 +34,6 @@ st.sidebar.text(f"Modelo LLM: {model}")
 st.markdown(
     """
     ### Bem-vindo ao MarketPulse
-    Plataforma de engenharia de dados em tempo real com streaming de criptoativos (Binance), conversão cambial (Banco Central do Brasil), armazenamento Delta Lake (SeaweedFS) e inteligência analítica.
+    Plataforma de engenharia de dados em tempo real com streaming de criptoativos (Binance), conversão cambial (Banco Central do Brasil), armazenamento Delta Lake (SeaweedFS) e inteligência anal[...]
     """
 )
